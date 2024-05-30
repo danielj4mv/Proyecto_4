@@ -16,7 +16,7 @@ with st.form(key='property_listing_form'):
     street = st.number_input('Street Number', value=1758218.0)
     zip_code = st.number_input('ZIP Code', value=6016.0)
     house_size = st.number_input('House Size (sqft)', value=1617.0)
-    prev_sold_date = st.number_input('Previous Sold Date (ordinal)', value=427)
+    prev_sold_date = st.number_input('Previous Sold Date', value=427)
     years_since_sold = st.number_input('Years Since Sold', value=25.0)
 
     submit_button = st.form_submit_button(label='Submit')
