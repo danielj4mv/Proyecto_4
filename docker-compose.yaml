@@ -1,0 +1,210 @@
+version: '3.7'
+
+x-airflow-common:
+  &airflow-common
+  # In order to add custom dependencies or upgrade provider packages you can use your extended image.
+  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
+  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
+
+  # image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.4.1}
+  build: ./dockerfiles/airflow
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    #AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    #AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKEND: 'airflow.api.auth.backend.basic_auth'
+    # _PIP_ADDITIONAL_REQUIREMENTS: 'mlflow'
+    MLFLOW_TRACKING_URI: "http://mlflow-webserver:5000"
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    MLFLOW_S3_ENDPOINT_URL: "http://s3:${MINIO_PORT}"
+    #AWS_DEFAULT_REGION: ${AWS_REGION}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+    - ./notebooks:/opt/airflow/notebooks
+    - ./src:/opt/airflow/src
+    - ./mlflow_artifacts:/mlflow_artifacts
+  user: "${AIRFLOW_UID:-1001}:0"
+  depends_on:
+    &airflow-common-depends-on
+    #redis:
+      #condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+
+
+#  ########################################################################################################
+#  # This container runs the postgresql database for mlflow.
+#  ########################################################################################################
+    postgres-mlflow:
+        image: postgres:13
+        environment:
+          POSTGRES_USER: ${POSTGRES_USER}
+          POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+          POSTGRES_DB: ${POSTGRES_DB}
+        volumes:
+          # The data folder is a named volume mounted to /var/lib/postgresql/data
+          - ./postgres-db-volume-mlflow:/var/lib/postgresql/data
+
+
+  ########################################################################################################
+  # This container runs the webserver for mlflow.
+  ########################################################################################################
+    mlflow-webserver:
+        build: ./dockerfiles/mlflow
+        image: mlflow_server
+        ports:
+          - "8081:5000"
+        environment:
+          # The following credentials allow connection to the S3 server.
+           AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+           AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+           MLFLOW_S3_ENDPOINT_URL: "http://s3:${MINIO_PORT}"
+           #AWS_DEFAULT_REGION: ${AWS_REGION}
+
+        # The following command will launch the mlflow webserver on port 5000, with postgresql as the database
+        # and S3 as the artifact storage.
+        # The option "--serve-artifacts" will enable the serving of artifacts through mlflow as a proxy to the S3 server.
+        command: mlflow server --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-mlflow/${POSTGRES_DB} --default-artifact-root s3://mlflow/ --artifacts-destination s3://mlflow/ --serve-artifacts --host 0.0.0.0 --port 5000
+        volumes:
+          - ./mlflow_artifacts:/mlflow_artifacts
+        depends_on:
+          - postgres-mlflow 
+          - s3
+
+
+  ########################################################################################################
+  # This container runs the jupyter lab.
+  ########################################################################################################
+
+#  ########################################################################################################
+#  # This container runs the postgresql database for airflow.
+#  ########################################################################################################
+    postgres:
+      image: postgres:13
+      environment:
+        POSTGRES_USER: airflow
+        POSTGRES_PASSWORD: airflow
+        POSTGRES_DB: airflow
+      volumes:
+        - ./postgres-db-volume-airflow:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD", "pg_isready", "-U", "airflow"]
+        interval: 5s
+        retries: 5
+      restart: always
+
+
+#  ########################################################################################################
+# The redis - broker that forwards messages from scheduler to worker.
+#  ########################################################################################################
+
+    s3:
+      restart: always
+      image: minio/minio
+      container_name: mlflow_minio
+      volumes:
+        - ./minio_data:/data
+      ports:
+        - "${MINIO_PORT}:9000"
+        - "${MINIO_CONSOLE_PORT}:8089"
+      environment:
+        - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+        - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      command: server /data --console-address ":8089"
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+        interval: 30s
+        timeout: 20s
+        retries: 3
+
+    airflow-webserver:
+      <<: *airflow-common
+      command: webserver
+      ports:
+        - "8080:8080"
+      healthcheck:
+        test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+        start_period: 30s
+      restart: always
+      depends_on:
+        <<: *airflow-common-depends-on
+        airflow-init:
+          condition: service_completed_successfully
+
+
+    airflow-scheduler:
+      <<: *airflow-common
+      command: scheduler
+      healthcheck:
+        test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+        interval: 10s
+        timeout: 10s
+        retries: 5
+      restart: always
+      depends_on:
+        <<: *airflow-common-depends-on
+        airflow-init:
+          condition: service_completed_successfully
+
+
+    airflow-triggerer:
+      <<: *airflow-common
+      command: triggerer
+      healthcheck:
+        test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+        interval: 10s
+        timeout: 10s
+        retries: 5
+      restart: always
+      depends_on:
+        <<: *airflow-common-depends-on
+        airflow-init:
+          condition: service_completed_successfully
+
+
+
+    airflow-init:
+      <<: *airflow-common
+      command: version
+      environment:
+        <<: *airflow-common-env
+        _AIRFLOW_DB_UPGRADE: 'true'
+        _AIRFLOW_WWW_USER_CREATE: 'true'
+        _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+        _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      user: "${AIRFLOW_UID:-1001}:0"
+      # Creates a folder airflow in the same dir as docker-compose to store the dags, logs and plugins folders
+      volumes:
+        - ./airflow/:/sources
+
+
+
+    fastapi:
+      build: ./dockerfiles/fastapi
+      container_name: fastapi
+      ports:
+        - '8085:8085'
+      restart: always
+
+
+
+    streamlit:
+      build: ./dockerfiles/streamlit
+      container_name: streamlit
+      ports:
+        - "8087:8087"
+      restart: always
