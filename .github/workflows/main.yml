@@ -36,4 +36,4 @@ jobs:
           context: ./Dockerfiles/${{ matrix.service }}
           file: ./Dockerfiles/${{ matrix.service }}/Dockerfile
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
