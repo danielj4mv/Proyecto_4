@@ -17,7 +17,7 @@ with st.form(key='property_listing_form'):
     street = st.number_input('Street Number', value=1758218.0)
     state = st.text_input('State', value='Massachusetts')
     zip_code = st.number_input('ZIP Code', value=6016.0)
-    house_size = st.number_input('House Size (sqft)', value=1617.0)
+    house_size = st.number_input('House Size', value=1617.0)
 
     submit_button = st.form_submit_button(label='Submit')
 
