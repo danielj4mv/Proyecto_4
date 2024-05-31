@@ -33,7 +33,7 @@ Video explicativo en youtube de funcionamiento del proyecto: [https://youtu.be/y
    - **MLflow:** puerto 8081
    - **Minio:** puerto 8089, las credenciales de acceso están definidas en el `.env`
    - **Fastapi:** puerto 8085
-   - **Streamlit:** puerto 8085
+   - **Streamlit:** puerto 8087
      
    Recuerde que si el ingreso es dessde la máquina virtual debe ir a `IP_de_la_MV:Puerto`, desde el pc local sería `Localhost:Puerto`
 
