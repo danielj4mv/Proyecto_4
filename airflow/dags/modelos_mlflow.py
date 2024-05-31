@@ -83,6 +83,12 @@ def train_model(model, model_name, df, **kwargs):
         mlflow.log_metric("mse", mse)
         mlflow.log_metric("r2", r2)
         mlflow.sklearn.log_model(model, "model", registered_model_name=model_name)
+        
+        # Loguear los shap values 
+        try:
+            mlflow.shap.log_explanation(model.predict, X_test[:100])
+        except:
+            pass
 
         ti = kwargs['ti']
         ti.xcom_push(key=f"{model_name}_metrics", value={
@@ -138,23 +144,24 @@ def evaluate_models(**kwargs):
         X_train = pd.DataFrame(best_model['X_train'])
         X_test = pd.DataFrame(best_model['X_test'])
         model = mlflow.sklearn.load_model(model_uri)
+        """
         explainer = shap.Explainer(model, X_train)
         shap_values = explainer(X_test, check_additivity=False)
         shap_summary = shap_values.mean(0).values.tolist()
-
+        """
         hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
         conn = hook.get_conn()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS shap_values (
-                model_name TEXT,
-                shap_values JSON
-            )
-        """)
-        cursor.execute("""
-            INSERT INTO shap_values (model_name, shap_values) VALUES (%s, %s)
-        """, (best_model['model_name'], json.dumps(shap_summary)))
+#        cursor.execute("""
+#            CREATE TABLE IF NOT EXISTS shap_values (
+#                model_name TEXT,
+#                shap_values JSON
+#            )
+#        """)
+#        cursor.execute("""
+#            INSERT INTO shap_values (model_name, shap_values) VALUES (%s, %s)
+#        """, (best_model['model_name'], json.dumps(shap_summary)))
 
         # Guardar los metadatos del modelo en PostgreSQL
         cursor.execute("""
