@@ -1,7 +1,7 @@
 import os
 import mlflow
 from airflow import DAG
-from airflow.operators.python_operator import PythonOperator
+from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
@@ -9,9 +9,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 import pandas as pd
 import xgboost as xgb
-import shap
 from datetime import datetime, timedelta
-import json
+from sqlalchemy import create_engine
 
 # Configuración del entorno
 os.environ['MLFLOW_S3_ENDPOINT_URL'] = 'http://s3:9000'
@@ -43,17 +42,27 @@ default_args = {
 }
 
 dag = DAG(
-    'train_real_estate_models_3',
+    'train_real_estate_models_34',
     default_args=default_args,
     description='Train machine learning models with sampling and track with MLflow',
     schedule_interval='@weekly',
     catchup=False
 )
 
-def fetch_data():
-    hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
-    df = hook.get_pandas_df("SELECT * FROM clean_data")
+def get_sqlalchemy_conn(postgres_hook):
+    connection = postgres_hook.get_connection(postgres_hook.postgres_conn_id)
+    return create_engine(f'postgresql+psycopg2://{connection.login}:{connection.password}@{connection.host}:{connection.port}/{connection.schema}')
 
+def fetch_data(**kwargs):
+    postgres_hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
+    engine = get_sqlalchemy_conn(postgres_hook)
+    
+    query = "SELECT * FROM clean_data_2;"
+    print(f"Running query: {query}")  # Registro adicional para ver la consulta ejecutada
+    df = pd.read_sql(query, engine)
+    
+    print(f"Fetched data: {df.head()}")  # Registro adicional para ver los primeros registros obtenidos
+    
     df['prev_sold_date'] = pd.to_datetime(df['prev_sold_date'], errors='coerce')
     df['prev_sold_date'] = df['prev_sold_date'].apply(lambda x: x.toordinal() if pd.notnull(x) else x)
     
@@ -63,9 +72,13 @@ def fetch_data():
 
 def sample_data(**kwargs):
     ti = kwargs['ti']
-    df = fetch_data()
+    df = fetch_data(**kwargs)
     
-    df_sampled = df.sample(n=10000, random_state=42)
+    if df.empty:
+        print("No data available to sample from.")  # Registro adicional para indicar que no hay datos disponibles
+        raise ValueError("No data available to sample from.")
+    
+    df_sampled = df.sample(n=min(len(df), 10000), random_state=42)
     
     ti.xcom_push(key='sampled_data', value=df_sampled.to_dict(orient='records'))
 
@@ -83,8 +96,7 @@ def train_model(model, model_name, df, **kwargs):
         mlflow.log_metric("mse", mse)
         mlflow.log_metric("r2", r2)
         mlflow.sklearn.log_model(model, "model", registered_model_name=model_name)
-        
-        # Loguear los shap values 
+
         try:
             mlflow.shap.log_explanation(model.predict, X_test[:100])
         except:
@@ -116,7 +128,7 @@ def train_xgboost(**kwargs):
     ti = kwargs['ti']
     sampled_data = ti.xcom_pull(task_ids='sample_data', key='sampled_data')
     df_sampled = pd.DataFrame(sampled_data)
-    train_model(xgb.XGBRegressor(n_estimators=100, random_state=42, n_jobs=-1), "XGBoost_Model", df_sampled, **kwargs)
+    train_model(xgb.XGBRegressor(n_estimators=10, random_state=42, n_jobs=-1), "XGBoost_Model", df_sampled, **kwargs)
 
 def evaluate_models(**kwargs):
     ti = kwargs['ti']
@@ -144,24 +156,10 @@ def evaluate_models(**kwargs):
         X_train = pd.DataFrame(best_model['X_train'])
         X_test = pd.DataFrame(best_model['X_test'])
         model = mlflow.sklearn.load_model(model_uri)
-        """
-        explainer = shap.Explainer(model, X_train)
-        shap_values = explainer(X_test, check_additivity=False)
-        shap_summary = shap_values.mean(0).values.tolist()
-        """
+        
         hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
         conn = hook.get_conn()
         cursor = conn.cursor()
-
-#        cursor.execute("""
-#            CREATE TABLE IF NOT EXISTS shap_values (
-#                model_name TEXT,
-#                shap_values JSON
-#            )
-#        """)
-#        cursor.execute("""
-#            INSERT INTO shap_values (model_name, shap_values) VALUES (%s, %s)
-#        """, (best_model['model_name'], json.dumps(shap_summary)))
 
         # Guardar los metadatos del modelo en PostgreSQL
         cursor.execute("""
@@ -186,12 +184,6 @@ def evaluate_models(**kwargs):
             cursor.close()
         if conn:
             conn.close()
-
-task_fetch_data = PythonOperator(
-    task_id='fetch_data',
-    python_callable=fetch_data,
-    dag=dag
-)
 
 task_sample_data = PythonOperator(
     task_id='sample_data',
@@ -228,4 +220,4 @@ task_evaluate = PythonOperator(
     dag=dag
 )
 
-task_fetch_data >> task_sample_data >> [task_train_rf, task_train_dt, task_train_xgb] >> task_evaluate
+task_sample_data >> [task_train_rf, task_train_dt, task_train_xgb] >> task_evaluate
