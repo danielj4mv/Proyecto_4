@@ -18,30 +18,7 @@ default_args = {
     'retry_delay': timedelta(seconds=5),
 }
 
-dag = DAG('Crear_tabla_1', schedule_interval="@once", default_args=default_args, catchup=False)
-
-def check_and_drop_table():
-    postgres_hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
-    conn = postgres_hook.get_conn()
-    cursor = conn.cursor()
-    
-    check_sql = """
-    SELECT EXISTS (
-        SELECT 1 
-        FROM information_schema.tables 
-        WHERE table_name = 'test_table'
-    );
-    """
-    cursor.execute(check_sql)
-    exists = cursor.fetchone()[0]
-    
-    if exists:
-        drop_sql = "DROP TABLE IF EXISTS test_table;"
-        cursor.execute(drop_sql)
-        conn.commit()
-    
-    cursor.close()
-    conn.close()
+dag = DAG('Crear_tabla_2', schedule_interval="@once", default_args=default_args, catchup=False)
 
 def get_data(**kwargs):
     url = "http://10.43.101.149/data?group_number=8"
@@ -50,14 +27,16 @@ def get_data(**kwargs):
         res = resp.json()
         # Guardar los datos en un archivo CSV temporal para inspección
         df = pd.DataFrame(res['data'])
-        df.to_csv('/opt/airflow/data/temp_api_data.csv', index=False)
-        return '/opt/airflow/data/temp_api_data.csv'
+        temp_file_path = '/opt/airflow/data/temp_api_data.csv'
+        df.to_csv(temp_file_path, index=False)
+        kwargs['ti'].xcom_push(key='temp_file_path', value=temp_file_path)
+        return temp_file_path
     return None
 
 def create_table():
     postgres_hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
     create_sql = """
-    CREATE TABLE IF NOT EXISTS test_table (
+    CREATE TABLE IF NOT EXISTS test_table_2 (
         brokered_by FLOAT,
         status VARCHAR(255),
         price FLOAT,
@@ -69,18 +48,23 @@ def create_table():
         state VARCHAR(255),
         zip_code FLOAT,
         house_size FLOAT,
-        prev_sold_date VARCHAR(255)
+        prev_sold_date VARCHAR(255),
+        inserted_at TIMESTAMP
     );
     """
     postgres_hook.run(create_sql)
 
 def store_data(ti, **kwargs):
-    file_path = ti.xcom_pull(task_ids='get_data')
+    file_path = ti.xcom_pull(task_ids='get_data', key='temp_file_path')
     if not file_path:
         return
 
     # Leer los datos del archivo CSV
     df = pd.read_csv(file_path)
+    current_timestamp = datetime.now()
+
+    # Convertir el timestamp a una cadena de texto con el formato adecuado
+    df['inserted_at'] = current_timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
     postgres_hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
     connection = postgres_hook.get_conn()
@@ -90,37 +74,24 @@ def store_data(ti, **kwargs):
     data_list = df.to_records(index=False).tolist()
 
     insert_sql = """
-    INSERT INTO test_table (
+    INSERT INTO test_table_2 (
         brokered_by, status, price, bed, bath, acre_lot,
-        street, city, state, zip_code, house_size, prev_sold_date
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        street, city, state, zip_code, house_size, prev_sold_date, inserted_at
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     cursor.executemany(insert_sql, data_list)
     connection.commit()
     cursor.close()
     connection.close()
 
-    df.to_csv('/opt/airflow/data/cross_tableA.csv', index=False)
+    df.to_csv('/opt/airflow/data/resultado.csv', index=False)
 
 def delete_temp_file():
     temp_file_path = '/opt/airflow/data/temp_api_data.csv'
     if os.path.exists(temp_file_path):
         os.remove(temp_file_path)
 
-def save_db(**kwargs):
-    query = 'SELECT * FROM test_table'
-    postgres_hook = PostgresHook(postgres_conn_id='postgres_test_conn', schema='airflow')
-    df = postgres_hook.get_pandas_df(sql=query)
-    print(df)
-
 # Definición de las tareas
-check_and_drop_task = PythonOperator(
-    task_id='check_and_drop_table',
-    python_callable=check_and_drop_table,
-    provide_context=True,
-    dag=dag,
-)
-
 fetch_data_task = PythonOperator(
     task_id='get_data',
     python_callable=get_data,
@@ -149,18 +120,5 @@ delete_temp_file_task = PythonOperator(
     dag=dag,
 )
 
-print_data_task = PythonOperator(
-    task_id='save_db',
-    python_callable=save_db,
-    provide_context=True,
-    dag=dag,
-)
-
-bash_task = BashOperator(
-    task_id='print_hello',
-    bash_command='echo "Hello World from Task 1"',
-    dag=dag
-)
-
 # Definición de la secuencia de tareas
-bash_task >> check_and_drop_task >> fetch_data_task >> create_table_task >> store_data_task >> delete_temp_file_task >> print_data_task
+fetch_data_task >> create_table_task >> store_data_task >> delete_temp_file_task
