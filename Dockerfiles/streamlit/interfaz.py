@@ -10,7 +10,7 @@ st.json(requests.get("http://fastapi:8085/").json())
 # Crear formulario con sus campos
 with st.form(key='property_listing_form'):
     brokered_by = st.number_input('Brokered By', value=101640.0)
-    stats = st.text_input('Status', value='for_sale')
+    status = st.text_input('Status', value='for_sale')
     bed = st.number_input('Number of Beds', value=4.0)
     bath = st.number_input('Number of Baths', value=2.0)
     acre_lot = st.number_input('Acre Lot', value=0.38)
@@ -25,7 +25,7 @@ with st.form(key='property_listing_form'):
 if submit_button:
     data = {
         "brokered_by": brokered_by,
-        "stats": stats,
+        "status": status,
         "bed": bed,
         "bath": bath,
         "acre_lot": acre_lot,
