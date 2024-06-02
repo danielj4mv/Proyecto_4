@@ -35,20 +35,29 @@ async def root():
 async def predict_readmitted(data: CoverType):
     # Perform prediction
     prediction = model.predict(
-        [
-            [
-                data.brokered_by,
-                data.status,
-                data.bed,
-                data.bath,
-                data.acre_lot,
-                data.street,
-                data.state,
-                data.zip_code,
-                data.house_size,
-            ]
-        ]
+            pd.DataFrame([[
+            data.brokered_by,
+            data.status,
+            data.bed,
+            data.bath,
+            data.acre_lot,
+            data.street,
+            data.state,
+            data.zip_code,
+            data.house_size,
+        ]], columns=[
+            "brokered_by",
+            "status",
+            "bed",
+            "bath",
+            "acre_lot",
+            "street",
+            "state",
+            "zip_code",
+            "house_size"
+    ])
     )
+
     # Convertir el resultado de la predicción a un diccionario
     prediction_dict = {
         "prediction": str(prediction[0])
