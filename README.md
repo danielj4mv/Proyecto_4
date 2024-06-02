@@ -1,5 +1,5 @@
 # Entrega Proyecto 4
-Video explicativo en youtube de funcionamiento del proyecto: [https://youtu.be/yds9bxsD4N0](https://youtu.be/2rHwjHhQgS8)
+Video explicativo en youtube de funcionamiento del proyecto: [https://youtu.be/1F5b6gAjo9E](https://youtu.be/1F5b6gAjo9E)
 ## Guía para desplegar 
 1. **Clonar el repositorio en la carpeta desde la que se quiere ejecutar el notebook**
    ```console
