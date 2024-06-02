@@ -13,7 +13,7 @@ os.environ['AWS_SECRET_ACCESS_KEY'] = 'mlflows3'
 
 mlflow.set_tracking_uri("http://mlflow-webserver:5000")
 
-model_name = "Random_Forest_Model"
+model_name = "LinearRegression"
 model_prod_uri = "models:/{model_name}/production".format(model_name=model_name)
 model = mlflow.pyfunc.load_model(model_uri=model_prod_uri)
 
@@ -38,14 +38,14 @@ async def predict_readmitted(data: CoverType):
         [
             [
                 data.brokered_by,
+                data.status,
                 data.bed,
                 data.bath,
                 data.acre_lot,
                 data.street,
+                data.state,
                 data.zip_code,
                 data.house_size,
-                data.prev_sold_date,
-                data.years_since_sold
             ]
         ]
     )
